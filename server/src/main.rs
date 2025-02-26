@@ -1,56 +1,109 @@
-//! Reverse proxy listening in "localhost:4000" will proxy all requests to "localhost:3000"
-//! endpoint.
-//!
-//! Run with
-//!
-//! ```not_rust
-//! cargo run -p example-reverse-proxy
-//! ```
+use std::{convert::Infallible, net::SocketAddr, sync::Arc};
 
-use axum::{
-    Router, body::Body, extract::State, http::uri::Uri, response::IntoResponse, routing::any,
+use http::HeaderValue;
+use hyper::{
+    Request, Response, Uri, body::Incoming, client::conn::http1::SendRequest, server::conn::http1,
+    service::service_fn,
 };
-use hyper::{Request, Response, StatusCode};
-use hyper_util::{client::legacy::connect::HttpConnector, rt::TokioExecutor};
+use hyper_util::rt::TokioIo;
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::Mutex,
+};
 
-type Client = hyper_util::client::legacy::Client<HttpConnector, Body>;
-
-#[tokio::main]
-async fn main() {
-    let client: Client =
-        hyper_util::client::legacy::Client::<(), ()>::builder(TokioExecutor::new())
-            .build(HttpConnector::new());
-
-    let app = Router::new()
-        .route("/{*path}", any(handler))
-        .with_state(client);
-
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:4000").await.unwrap();
-    println!("listening on {}", listener.local_addr().unwrap());
-    axum::serve(listener, app).await.unwrap();
+#[derive(Clone, Debug)]
+struct Client {
+    url: Uri,
+    sender: Arc<Mutex<SendRequest<Incoming>>>,
 }
 
-#[axum::debug_handler]
-async fn handler(
-    State(client): State<Client>,
-    mut req: Request<Body>,
-) -> Result<Response<Body>, StatusCode> {
+async fn run_client(url: Uri) -> Client {
+    // Get the host and the port
+    let host = url.host().expect("uri has no host");
+    let port = url.port_u16().unwrap_or(80);
+
+    let address = format!("{}:{}", host, port);
+
+    // Open a TCP connection to the remote host
+    let stream = TcpStream::connect(address).await.unwrap();
+
+    // Use an adapter to access something implementing `tokio::io` traits as if they implement
+    // `hyper::rt` IO traits.
+    let io = TokioIo::new(stream);
+
+    // Create the Hyper client
+    let (sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
+
+    // Spawn a task to poll the connection, driving the HTTP state
+    tokio::task::spawn(async move {
+        if let Err(err) = conn.await {
+            println!("Connection failed: {:?}", err);
+        }
+    });
+
+    Client {
+        url,
+        sender: Arc::new(Mutex::new(sender)),
+    }
+}
+
+async fn hello(
+    mut req: Request<Incoming>,
+    Client { url, sender }: Client,
+) -> Result<Response<Incoming>, Infallible> {
     println!("request: {req:?}");
 
-    let path = req.uri().path();
-    let path_query = req
-        .uri()
-        .path_and_query()
-        .map(|v| v.as_str())
-        .unwrap_or(path);
+    /*
+    let (parts, body) = req.into_parts();
+    let bytes: Bytes = body.collect().await.unwrap().to_bytes();
+    let mut req = Request::from_parts(parts, Full::new(bytes));
+    */
 
-    let uri = format!("http://127.0.0.1:8080{}", path_query);
+    let authority = url.authority().cloned().unwrap();
+    req.headers_mut().insert(
+        hyper::header::HOST,
+        HeaderValue::from_str(authority.as_str()).unwrap(),
+    );
 
-    *req.uri_mut() = Uri::try_from(uri).unwrap();
+    // Await the response...
+    let res = sender.lock().await.send_request(req).await.unwrap();
 
-    Ok(client
-        .request(req)
-        .await
-        .map_err(|_| StatusCode::BAD_REQUEST)?
-        .into_response())
+    println!("Response status: {}", res.status());
+
+    Ok(res)
+}
+
+async fn serve(addr: SocketAddr, client: Client) -> ! {
+    // We create a TcpListener and bind it to addr
+    let listener = TcpListener::bind(addr).await.unwrap();
+
+    // We start a loop to continuously accept incoming connections
+    loop {
+        let (stream, _) = listener.accept().await.unwrap();
+
+        // Use an adapter to access something implementing `tokio::io` traits as if they implement
+        // `hyper::rt` IO traits.
+        let io = TokioIo::new(stream);
+
+        let client = client.clone();
+
+        // Spawn a tokio task to serve multiple connections concurrently
+        tokio::task::spawn(async move {
+            // Finally, we bind the incoming connection to our `hello` service
+            if let Err(err) = http1::Builder::new()
+                // `service_fn` converts our function in a `Service`
+                .serve_connection(io, service_fn(move |req| hello(req, client.clone())))
+                .await
+            {
+                eprintln!("Error serving connection: {:?}", err);
+            }
+        });
+    }
+}
+
+#[tokio::main]
+async fn main() -> ! {
+    let client = run_client("http://127.0.0.1:8080".parse::<Uri>().unwrap()).await;
+
+    serve(SocketAddr::from(([0, 0, 0, 0], 4000)), client).await
 }
