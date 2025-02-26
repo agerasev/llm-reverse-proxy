@@ -1,9 +1,13 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Error;
-use http::HeaderValue;
+use http::header;
+use http_body_util::{BodyExt, BodyStream, Full, StreamBody, combinators::BoxBody};
 use hyper::{
-    Request, Response, Uri, body::Incoming, client::conn::http1::SendRequest, server::conn::http1,
+    Request, Response, Uri,
+    body::{Bytes, Incoming},
+    client::conn::http1::SendRequest,
+    server::conn::http1,
     service::service_fn,
 };
 use hyper_util::rt::TokioIo;
@@ -13,8 +17,10 @@ use tokio::{
     task::JoinHandle,
 };
 
+type Outgoing = BoxBody<Bytes, Error>;
+
 struct Connection {
-    sender: SendRequest<Incoming>,
+    sender: SendRequest<Full<Bytes>>,
     task: JoinHandle<()>,
 }
 
@@ -24,10 +30,10 @@ impl Connection {
         let host = url.host().expect("URL has no host");
         let port = url.port_u16().unwrap_or(80);
 
-        let address = format!("{}:{}", host, port);
+        let addr = format!("{}:{}", host, port);
 
         // Open a TCP connection to the remote host
-        let stream = TcpStream::connect(address).await?;
+        let stream = TcpStream::connect(&addr).await?;
 
         // Use an adapter to access something implementing `tokio::io` traits as if they implement
         // `hyper::rt` IO traits.
@@ -35,18 +41,21 @@ impl Connection {
 
         // Create the Hyper client
         let (sender, conn) = hyper::client::conn::http1::handshake(io).await?;
+        log::debug!("Outgoing connection to {addr} established");
 
         // Spawn a task to poll the connection, driving the HTTP state
         let task = tokio::task::spawn(async move {
             if let Err(err) = conn.await {
-                log::error!("Forwarding connection failed: {:?}", err);
+                log::error!("Outgoing connection to {addr} failed: {:?}", err);
+            } else {
+                log::debug!("Outgoing connection to {addr} closed");
             }
         });
 
         Ok(Self { sender, task })
     }
 
-    async fn send(&mut self, req: Request<Incoming>) -> Result<Response<Incoming>, Error> {
+    async fn send(&mut self, req: Request<Full<Bytes>>) -> Result<Response<Incoming>, Error> {
         Ok(self.sender.send_request(req).await?)
     }
 
@@ -69,7 +78,7 @@ impl Client {
         }
     }
 
-    async fn send(&self, req: Request<Incoming>) -> Result<Response<Incoming>, Error> {
+    async fn send(&self, req: Request<Full<Bytes>>) -> Result<Response<Incoming>, Error> {
         let mut guard = self.connection.lock().await;
         let conn = loop {
             let conn = match guard.take() {
@@ -84,22 +93,29 @@ impl Client {
         conn.send(req).await
     }
 
-    async fn forward(self, mut req: Request<Incoming>) -> Result<Response<Incoming>, Error> {
+    async fn forward(self, req: Request<Incoming>) -> Result<Response<Outgoing>, Error> {
         log::trace!("Request: {req:?}");
 
-        let authority = self
+        let host = self
             .url
             .authority()
             .cloned()
             .expect("Client URL must be set");
-        req.headers_mut().insert(
-            hyper::header::HOST,
-            HeaderValue::from_str(authority.as_str())?,
-        );
+        let uri = req.uri().clone();
+        let body = req.into_body().collect().await?.to_bytes();
+
+        let req = Request::builder()
+            .method(http::Method::POST)
+            .uri(uri)
+            .header(header::HOST, host.as_str())
+            .body(Full::new(body))?;
 
         // Await the response...
         let res = self.send(req).await?;
         log::trace!("Response: {res:?}");
+
+        let body = StreamBody::new(BodyStream::new(res.into_body().map_err(Error::new))).boxed();
+        let res = Response::builder().body(body)?;
 
         Ok(res)
     }
@@ -108,10 +124,12 @@ impl Client {
 async fn serve(addr: SocketAddr, url: Uri) -> Result<(), Error> {
     // We create a TcpListener and bind it to addr
     let listener = TcpListener::bind(addr).await?;
+    log::info!("Listening for incoming connections at {addr}");
 
     // We start a loop to continuously accept incoming connections
     loop {
-        let (stream, _) = listener.accept().await?;
+        let (stream, addr) = listener.accept().await?;
+        log::debug!("Incoming connection from {addr} established");
 
         // Use an adapter to access something implementing `tokio::io` traits as if they implement
         // `hyper::rt` IO traits.
@@ -128,10 +146,12 @@ async fn serve(addr: SocketAddr, url: Uri) -> Result<(), Error> {
                 .await
             {
                 if err.is_incomplete_message() {
-                    log::warn!("Incoming connection unexpected EOF");
+                    log::warn!("Incoming connection from {addr} unexpected EOF");
                 } else {
-                    log::error!("Incoming connection failed: {:?}", err);
+                    log::error!("Incoming connection from {addr} failed: {err:?}");
                 }
+            } else {
+                log::debug!("Incoming connection closed: {addr}");
             }
         });
     }
