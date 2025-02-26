@@ -1,0 +1,10 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = "0.8.1"
+hyper = { version = "1.6.0", features = ["full"] }
+hyper-util = { version = "0.1.10", features = ["full"] }
+tokio = { version = "1.43.0", features = ["full"] }
