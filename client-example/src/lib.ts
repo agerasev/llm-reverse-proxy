@@ -1,6 +1,6 @@
 interface Message {
     role: string,
-    content: string,
+    content?: string,
 }
 
 interface Request {

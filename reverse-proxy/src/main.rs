@@ -1,7 +1,3 @@
-mod files;
-mod proxy;
-mod service;
-
 use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Error;
@@ -9,9 +5,7 @@ use hyper::{Uri, server::conn::http1, service::service_fn};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
-use self::{files::FileServer, proxy::ReverseProxy};
-
-pub use self::service::{Outgoing, Router, Service};
+use openai_reverse_proxy::Service;
 
 async fn serve<S, F>(addr: SocketAddr, mut make_service: F) -> Result<(), Error>
 where
@@ -61,6 +55,8 @@ where
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    use openai_reverse_proxy::{Router, files::FileServer, openai::proxy::ReverseProxy};
+
     env_logger::builder().init();
 
     let server_addr = SocketAddr::from(([0, 0, 0, 0], 4000));
