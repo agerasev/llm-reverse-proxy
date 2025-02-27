@@ -1,57 +1,17 @@
 mod files;
 mod proxy;
+mod service;
 
 use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Error;
-use files::FileServer;
-use http::{Request, Response};
-use http_body_util::combinators::BoxBody;
-use hyper::{
-    Uri,
-    body::{Bytes, Incoming},
-    server::conn::http1,
-    service::service_fn,
-};
+use hyper::{Uri, server::conn::http1, service::service_fn};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
-use self::proxy::ReverseProxy;
+use self::{files::FileServer, proxy::ReverseProxy};
 
-pub type Outgoing = BoxBody<Bytes, Error>;
-
-/// TODO: Use hyper::Service
-pub trait Service: Send + Sync {
-    fn call(
-        &self,
-        req: Request<Incoming>,
-    ) -> impl Future<Output = Result<Response<Outgoing>, Error>> + Send;
-
-    fn call_arc(
-        self: Arc<Self>,
-        req: Request<Incoming>,
-    ) -> impl Future<Output = Result<Response<Outgoing>, Error>> + Send
-    where
-        Self: 'static,
-    {
-        async move { self.call(req).await }
-    }
-}
-
-struct Handler {
-    proxy: ReverseProxy,
-    files: FileServer,
-}
-
-impl Service for Handler {
-    async fn call(&self, req: Request<Incoming>) -> Result<Response<Outgoing>, Error> {
-        if req.uri().path() == "/chat/completions" {
-            self.proxy.call(req).await
-        } else {
-            self.files.call(req).await
-        }
-    }
-}
+pub use self::service::{Outgoing, Router, Service};
 
 async fn serve<S, F>(addr: SocketAddr, mut make_service: F) -> Result<(), Error>
 where
@@ -105,13 +65,10 @@ async fn main() -> Result<(), Error> {
 
     let server_addr = SocketAddr::from(([0, 0, 0, 0], 4000));
     let proxy_url = "http://127.0.0.1:8080".parse::<Uri>()?;
-    let static_path = "../client-example";
 
     serve(server_addr, async move || {
-        Ok(Handler {
-            proxy: ReverseProxy::new(proxy_url.clone()),
-            files: FileServer::new(static_path),
-        })
+        Ok(Router::new(FileServer::new("../client-example"))
+            .push("/chat/completions", ReverseProxy::new(proxy_url.clone())))
     })
     .await
 }
