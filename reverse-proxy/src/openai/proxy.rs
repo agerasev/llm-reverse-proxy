@@ -10,7 +10,11 @@ use hyper_util::rt::TokioIo;
 use tokio::{net::TcpStream, sync::Mutex, task::JoinHandle};
 use tokio_stream::StreamExt;
 
-use crate::{Outgoing, Service, openai::api};
+use crate::{
+    Outgoing, Service,
+    openai::api,
+    sse::{Event, EventReader},
+};
 
 struct Connection {
     sender: SendRequest<Full<Bytes>>,
@@ -119,45 +123,49 @@ impl Service for ReverseProxy {
         let res = self.send(req).await?;
         log::trace!("Response: {res:?}");
 
-        let body = StreamBody::new(BodyStream::new(res.into_body()).map(|res| {
+        let mut event_reader = EventReader::default();
+        let body = StreamBody::new(BodyStream::new(res.into_body()).map(move |res| {
             let input = match res?.into_data() {
-                Ok(data) => String::from_utf8(data.to_vec())?,
+                Ok(data) => data.to_vec(),
                 Err(frame) => return Ok(frame),
             };
-            log::trace!("Outgoing response data frame: {}", input);
-            let mut output = Vec::new();
+            log::trace!(
+                "Outgoing response data frame: {}",
+                String::from_utf8_lossy(&input)
+            );
+            let mut output = String::new();
 
-            const SEP: &str = "\n\n";
-            const DATA_PREFIX: &str = "data: ";
             const DONE: &str = "[DONE]";
+            for event in event_reader.next_events(&input)? {
+                let data = match event.data {
+                    Some(data) => data,
+                    None => continue,
+                };
 
-            for (i, data) in input.split(SEP).enumerate() {
-                if i != 0 {
-                    output.extend_from_slice(SEP.as_bytes());
-                }
-                let payload = match data.strip_prefix(DATA_PREFIX) {
-                    None | Some(DONE) => {
-                        output.extend_from_slice(data.as_bytes());
-                        continue;
+                let event = if data == DONE {
+                    Event {
+                        data: Some(DONE.into()),
+                        ..Default::default()
                     }
-                    Some(payload) => payload,
-                };
-                let msg: api::ResponseStreamChunk = serde_json::from_str(payload)?;
-                log::trace!("Outgoing response message struct: {:?}", msg);
+                } else {
+                    let msg: api::ResponseStreamChunk = serde_json::from_str(&data)?;
+                    log::trace!("Outgoing response message struct: {:?}", msg);
 
-                let msg = api::ResponseStreamChunk {
-                    choices: msg.choices,
+                    let msg = api::ResponseStreamChunk {
+                        choices: msg.choices,
+                    };
+                    log::trace!("Incoming response message struct: {:?}", msg);
+                    Event {
+                        // TODO: Write to output without allocation
+                        data: Some(serde_json::to_string(&msg)?.into()),
+                        ..Default::default()
+                    }
                 };
-                log::trace!("Incoming response message struct: {:?}", msg);
-                // TODO: Write to output without allocation
-                output.extend_from_slice(DATA_PREFIX.as_bytes());
-                serde_json::to_writer(&mut output, &msg)?;
+
+                event.write_to(&mut output)?;
             }
 
-            log::trace!(
-                "Incoming response data frame: {}",
-                String::from_utf8_lossy(&output)
-            );
+            log::trace!("Incoming response data frame: {}", output);
             Ok(Frame::data(Bytes::from(output)))
         }))
         .boxed();
