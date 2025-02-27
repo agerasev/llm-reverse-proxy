@@ -2,19 +2,18 @@
   "name": "dashboard-assistant",
   "version": "0.1.0",
   "description": "Dashboard assistant",
-  "main": "index.js",
+  "type": "module",
+  "main": "main.mjs",
   "scripts": {
-    "clean": "rm -r dist",
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "clean": "rm -r bundle.js",
+    "build": "esbuild src/lib.ts --outfile=bundle.js --format=esm --bundle",
+    "build:watch": "esbuild src/lib.ts --outfile=bundle.js --format=esm --bundle --watch",
+    "start": "node main.mjs"
   },
   "author": "",
   "license": "MIT",
-  "dependencies": {
-    "openai": "^4.85.4"
-  },
+  "dependencies": {},
   "devDependencies": {
-    "typescript": "^5.7.3"
+    "esbuild": "0.25.0"
   }
 }
