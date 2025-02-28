@@ -4,7 +4,7 @@
 <head>
     <script type="module">
         import { chat } from "./bundle.js";
-        window.addEventListener("load", () => chat("/chat/completions"));
+        window.addEventListener("load", async () => console.log(await chat(location.protocol + '//' + location.host)));
     </script>
 </head>
 

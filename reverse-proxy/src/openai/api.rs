@@ -30,6 +30,7 @@ pub struct Response<'a> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Delta<'a> {
     pub content: Option<Cow<'a, str>>,
+    pub role: Option<Cow<'a, str>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

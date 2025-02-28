@@ -1,12 +1,13 @@
 import 'dotenv/config'
 import { chat } from "./bundle.js";
 
-await chat("http://127.0.0.1:4000/chat/completions");
+console.log(await chat("http://127.0.0.1:4000"));
+//console.log(await chat("http://127.0.0.1:8080"));
 
 /*
 if (process.env.OPENAI_API_KEY) {
     await chat(
-        "https://api.openai.com/v1/chat/completions",
+        "https://api.openai.com/",
         "gpt-4o",
         process.env.OPENAI_API_KEY,
     );

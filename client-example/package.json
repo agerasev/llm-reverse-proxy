@@ -6,9 +6,9 @@
   "main": "main.mjs",
   "scripts": {
     "clean": "rm -r bundle.js",
-    "build": "esbuild src/lib.ts --outfile=bundle.js --format=esm --bundle",
-    "build:watch": "esbuild src/lib.ts --outfile=bundle.js --format=esm --bundle --watch",
-    "start": "node main.mjs"
+    "build": "esbuild src/lib.ts --outfile=bundle.js --format=esm --bundle --sourcemap",
+    "build:watch": "esbuild src/lib.ts --outfile=bundle.js --format=esm --bundle --sourcemap --watch",
+    "start": "node --enable-source-maps main.mjs"
   },
   "author": "",
   "license": "MIT",
@@ -16,6 +16,7 @@
     "esbuild": "0.25.0"
   },
   "dependencies": {
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "openai": "^4.86.1"
   }
 }

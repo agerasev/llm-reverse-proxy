@@ -1,6 +1,6 @@
 use std::convert::Infallible;
 
-use anyhow::Error;
+use anyhow::{Error, bail};
 use http::header;
 use http_body_util::{BodyExt, BodyStream, Full, StreamBody};
 use hyper::{
@@ -105,6 +105,9 @@ impl Service for ReverseProxy {
 
         let host = self.url.authority().expect("Client URL must be set");
         let uri = req.uri().clone();
+        if uri.path() != "/chat/completions" {
+            bail!("Path must be '/chat/completions' but got {:?}", uri.path());
+        }
         let data = req.into_body().collect().await?.to_bytes();
         log::trace!("Incoming request data: {}", String::from_utf8_lossy(&data));
         let msg: api::Request = serde_json::from_slice(&data)?;
@@ -170,9 +173,13 @@ impl Service for ReverseProxy {
                         let msg: api::ResponseStreamChunk = serde_json::from_str(&data)?;
                         log::trace!("Outgoing response event struct: {:?}", msg);
 
-                        let msg = api::ResponseStreamChunk {
-                            choices: msg.choices,
-                        };
+                        let mut choices = msg.choices;
+                        for choice in choices.iter_mut() {
+                            if choice.finish_reason.is_some() {
+                                choice.delta.role = Some("assistant".into());
+                            }
+                        }
+                        let msg = api::ResponseStreamChunk { choices };
                         log::trace!("Incoming response event struct: {:?}", msg);
                         Event {
                             // TODO: Write to output without allocation
