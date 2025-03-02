@@ -1,0 +1,21 @@
+{
+  "name": "dashboard-assistant-web",
+  "version": "0.1.0",
+  "description": "",
+  "type": "module",
+  "main": "src/main.ts",
+  "scripts": {
+    "clean": "rm -r ./build",
+    "build": "esbuild src/main.ts --bundle --outdir=./build --format=esm --sourcemap",
+    "build:watch": "esbuild src/main.ts --bundle --outdir=./build --format=esm --sourcemap --watch"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "common": "file:../common"
+  },
+  "devDependencies": {
+    "@typescript/lib-dom": "npm:@types/web@^0.0.208",
+    "esbuild": "0.25.0"
+  }
+}

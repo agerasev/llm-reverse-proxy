@@ -1,0 +1,12 @@
+{
+  "name": "dashboard-assistant-common",
+  "version": "0.1.0",
+  "description": "",
+  "type": "module",
+  "main": "src/index.ts",
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "openai": "^4.86.1"
+  }
+}

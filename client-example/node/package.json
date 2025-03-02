@@ -1,0 +1,21 @@
+{
+  "name": "dashboard-assistant-node",
+  "version": "0.1.0",
+  "description": "",
+  "type": "module",
+  "main": "src/main.ts",
+  "scripts": {
+    "start": "tsx ./src/main.ts"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "common": "file:../common",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.8",
+    "typescript": "^5.8.2",
+    "tsx": "^4.19.3"
+  }
+}

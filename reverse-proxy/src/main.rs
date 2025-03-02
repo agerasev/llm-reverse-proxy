@@ -15,7 +15,7 @@ async fn main() {
     let proxy_url = "http://127.0.0.1:8080"
         .parse::<Uri>()
         .expect("Cannot parse proxy URL");
-    let static_path = "../client-example";
+    let static_path = "../client-example/web";
     let system_prompt = env::var("SYSTEM_PROMPT").ok();
     log::info!("System prompt: {system_prompt:?}");
 
