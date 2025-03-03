@@ -1,5 +1,6 @@
 import { Client, Message } from "common";
 
+
 function escapeHtml(text: string) {
     let div = document.createElement('div');
     div.innerText = text;
@@ -40,11 +41,7 @@ class Chat {
             }
             this.messages.push(await stream.collect());
         } catch (e) {
-            //if (e instanceof Error) {
             history.innerHTML += `<h3 style="color:#ff0000">${escapeHtml(e.message)}</h3>`;
-            //} else {
-            //    throw e;
-            //}
         }
         button.disabled = false;
     }

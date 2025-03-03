@@ -1,0 +1,8 @@
+{
+    "name": "dashboard-assistant",
+    "workspaces": [
+        "common",
+        "node",
+        "web"
+    ]
+}

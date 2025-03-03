@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import { Client } from "common";
 
+
 async function main(server_kind: string) {
     let client: Client;
     let model = "";
@@ -17,7 +18,7 @@ async function main(server_kind: string) {
                     "https://api.openai.com/",
                     process.env.OPENAI_API_KEY,
                 );
-                model = "gpt-4o";
+                model = "gpt-4o-mini";
             } else {
                 console.error("Empty OPENAI_API_KEY env var");
                 return;

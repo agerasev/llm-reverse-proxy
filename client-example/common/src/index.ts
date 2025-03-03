@@ -6,7 +6,6 @@ import {
     ChatCompletionUserMessageParam,
 } from 'openai/resources/chat/completions';
 
-export type Error = APIError;
 
 export interface Message {
     role: "user" | "assistant";
