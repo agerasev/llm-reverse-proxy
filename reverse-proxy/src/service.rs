@@ -1,8 +1,8 @@
-use std::{pin::Pin, sync::Arc};
+use std::{convert::Infallible, pin::Pin, sync::Arc};
 
 use anyhow::Error;
 use http::{Request, Response};
-use http_body_util::combinators::BoxBody;
+use http_body_util::{BodyExt, Empty, combinators::BoxBody};
 use hyper::body::{Bytes, Incoming};
 
 pub type Outgoing = BoxBody<Bytes, Error>;
@@ -22,6 +22,13 @@ pub trait Service: Send + Sync {
         Self: 'static,
     {
         async move { self.call(req).await }
+    }
+
+    fn into_dyn(self) -> Arc<dyn ServiceDyn>
+    where
+        Self: Sized + 'static,
+    {
+        Arc::new(self)
     }
 }
 
@@ -76,5 +83,27 @@ impl Service for Router {
             }
         }
         self.default.call(req).await
+    }
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct Nothing;
+
+impl Service for Nothing {
+    async fn call(&self, _req: Request<Incoming>) -> Result<Response<Outgoing>, Error> {
+        Ok(Response::builder().status(404).body(
+            Empty::new()
+                .map_err(|_: Infallible| -> Error { unreachable!() })
+                .boxed(),
+        )?)
+    }
+}
+
+impl<S: Service> Service for Option<S> {
+    async fn call(&self, req: Request<Incoming>) -> Result<Response<Outgoing>, Error> {
+        match self {
+            Some(service) => service.call(req).await,
+            None => Nothing.call(req).await,
+        }
     }
 }

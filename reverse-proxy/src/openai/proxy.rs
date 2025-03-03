@@ -65,6 +65,7 @@ impl Connection {
 
 pub struct ReverseProxy {
     url: Uri,
+    api_key: Option<String>,
     connection: Mutex<Option<Connection>>,
     system_prompt: Option<String>,
 }
@@ -73,12 +74,18 @@ impl ReverseProxy {
     pub fn new(url: Uri) -> Self {
         Self {
             url,
-            connection: Mutex::new(None),
+            api_key: None,
             system_prompt: None,
+            connection: Mutex::new(None),
         }
     }
 
-    pub fn with_system_prompt(mut self, prompt: Option<impl Into<String>>) -> Self {
+    pub fn api_key(mut self, api_key: Option<String>) -> Self {
+        self.api_key = api_key;
+        self
+    }
+
+    pub fn system_prompt(mut self, prompt: Option<impl Into<String>>) -> Self {
         self.system_prompt = prompt.map(|s| s.into());
         self
     }
@@ -134,11 +141,16 @@ impl Service for ReverseProxy {
             String::from_utf8_lossy(&data)
         );
 
-        let req = Request::builder()
+        let mut builder = Request::builder()
             .method(http::Method::POST)
             .uri(&uri)
             .header(header::HOST, host.as_str())
-            .body(Full::new(data))?;
+            .header(header::ACCEPT, "application/json")
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(api_key) = &self.api_key {
+            builder = builder.header(header::AUTHORIZATION, format!("Bearer {api_key}"));
+        }
+        let req = builder.body(Full::new(data))?;
 
         // Await the response...
         let res = self.send(req).await?;
@@ -175,7 +187,7 @@ impl Service for ReverseProxy {
 
                         let mut choices = msg.choices;
                         for choice in choices.iter_mut() {
-                            if choice.finish_reason.is_some() {
+                            if choice.finish_reason.is_some() && choice.delta.role.is_none() {
                                 choice.delta.role = Some("assistant".into());
                             }
                         }
