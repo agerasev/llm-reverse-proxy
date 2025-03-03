@@ -29,6 +29,8 @@ class Chat {
         history.innerHTML += "<h3>User</h3>";
         history.innerHTML += escapeHtml(msg.content);
 
+        let button = document.getElementById("send")! as HTMLButtonElement;
+        button.disabled = true;
         const stream = await this.client.send(this.model, this.messages);
 
         history.innerHTML += "<h3>Assistant</h3>";
@@ -36,6 +38,7 @@ class Chat {
             history.innerHTML += escapeHtml(chunk);
         }
         this.messages.push(await stream.collect());
+        button.disabled = false;
     }
 
     register() {
