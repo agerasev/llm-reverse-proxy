@@ -1,7 +1,8 @@
-use std::convert::Infallible;
+use std::{convert::Infallible, pin::Pin};
 
 use anyhow::{Error, bail};
-use http::header;
+use clap::ValueEnum;
+use http::{header, uri::PathAndQuery};
 use http_body_util::{BodyExt, BodyStream, Full, StreamBody};
 use hyper::{
     Request, Response, Uri,
@@ -9,7 +10,14 @@ use hyper::{
     client::conn::http1::SendRequest,
 };
 use hyper_util::rt::TokioIo;
-use tokio::{net::TcpStream, sync::Mutex, task::JoinHandle};
+use openssl::ssl::{Ssl, SslContext, SslMethod};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::TcpStream,
+    sync::Mutex,
+    task::JoinHandle,
+};
+use tokio_openssl::SslStream;
 use tokio_stream::StreamExt;
 
 use crate::{
@@ -24,16 +32,41 @@ struct Connection {
 }
 
 impl Connection {
-    async fn connect(url: &Uri) -> Result<Self, Error> {
+    async fn connect_url(url: &Uri) -> Result<Self, Error> {
         // Get the host and the port
         let host = url.host().expect("URL has no host");
-        let port = url.port_u16().unwrap_or(80);
+        let port = url.port_u16();
+        match url.scheme_str().expect("Server address has no scheme") {
+            "http" => {
+                let addr = format!("{}:{}", host, port.unwrap_or(80));
 
-        let addr = format!("{}:{}", host, port);
+                // Open a TCP connection to the remote host
+                let stream = TcpStream::connect(&addr).await?;
 
-        // Open a TCP connection to the remote host
-        let stream = TcpStream::connect(&addr).await?;
+                Self::connect_stream(stream, addr).await
+            }
+            "https" => {
+                let addr = format!("{}:{}", host, port.unwrap_or(443));
 
+                // Open an SSL connection to the remote host
+                let stream = TcpStream::connect(&addr).await?;
+
+                let ssl_context = SslContext::builder(SslMethod::tls())?.build();
+                let mut ssl = Ssl::new(&ssl_context)?;
+                ssl.set_hostname(host)?;
+                let mut ssl_stream = SslStream::new(ssl, stream)?;
+                Pin::new(&mut ssl_stream).connect().await?;
+
+                Self::connect_stream(ssl_stream, addr).await
+            }
+            scheme => bail!("Unsupported scheme: {scheme}"),
+        }
+    }
+
+    async fn connect_stream<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
+        stream: S,
+        addr: String,
+    ) -> Result<Self, Error> {
         // Use an adapter to access something implementing `tokio::io` traits as if they implement
         // `hyper::rt` IO traits.
         let io = TokioIo::new(stream);
@@ -63,17 +96,28 @@ impl Connection {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, ValueEnum)]
+pub enum ServerKind {
+    #[default]
+    LlamaCpp,
+    Openai,
+}
+
 pub struct ReverseProxy {
     url: Uri,
+    kind: ServerKind,
+
     api_key: Option<String>,
-    connection: Mutex<Option<Connection>>,
     system_prompt: Option<String>,
+
+    connection: Mutex<Option<Connection>>,
 }
 
 impl ReverseProxy {
-    pub fn new(url: Uri) -> Self {
+    pub fn new(url: Uri, kind: ServerKind) -> Self {
         Self {
             url,
+            kind,
             api_key: None,
             system_prompt: None,
             connection: Mutex::new(None),
@@ -95,7 +139,7 @@ impl ReverseProxy {
         let conn = loop {
             let conn = match guard.take() {
                 Some(conn) => conn,
-                None => Connection::connect(&self.url).await?,
+                None => Connection::connect_url(&self.url).await?,
             };
             if conn.is_closed() {
                 continue;
@@ -108,7 +152,7 @@ impl ReverseProxy {
 
 impl Service for ReverseProxy {
     async fn call(&self, req: Request<Incoming>) -> Result<Response<Outgoing>, Error> {
-        log::trace!("Request: {req:?}");
+        log::trace!("Incoming: {req:?}");
 
         let host = self.url.authority().expect("Client URL must be set");
         let uri = req.uri().clone();
@@ -118,7 +162,6 @@ impl Service for ReverseProxy {
         let data = req.into_body().collect().await?.to_bytes();
         log::trace!("Incoming request data: {}", String::from_utf8_lossy(&data));
         let msg: api::Request = serde_json::from_slice(&data)?;
-        log::trace!("Incoming request struct: {:?}", msg);
 
         let mut messages = vec![];
         if let Some(prompt) = &self.system_prompt {
@@ -130,17 +173,29 @@ impl Service for ReverseProxy {
         messages.extend(msg.messages);
         let streaming = msg.stream.unwrap_or(false);
         let msg = api::Request {
-            model: "".into(),
+            model: match self.kind {
+                ServerKind::LlamaCpp => "",
+                ServerKind::Openai => "gpt-4o-mini",
+            }
+            .into(),
             messages,
             stream: Some(streaming),
         };
-        log::trace!("Outgoing request struct: {:?}", msg);
+
         let data = Bytes::from(serde_json::to_vec(&msg)?);
         log::trace!(
             "Outgoing request data: {:?}",
             String::from_utf8_lossy(&data)
         );
 
+        let uri = {
+            let mut parts = uri.into_parts();
+            parts.path_and_query = Some(PathAndQuery::from_static(match self.kind {
+                ServerKind::LlamaCpp => "/chat/completions",
+                ServerKind::Openai => "/v1/chat/completions",
+            }));
+            Uri::from_parts(parts)?
+        };
         let mut builder = Request::builder()
             .method(http::Method::POST)
             .uri(&uri)
@@ -151,10 +206,11 @@ impl Service for ReverseProxy {
             builder = builder.header(header::AUTHORIZATION, format!("Bearer {api_key}"));
         }
         let req = builder.body(Full::new(data))?;
+        log::trace!("Outgoing: {req:?}");
 
         // Await the response...
         let res = self.send(req).await?;
-        log::trace!("Response: {res:?}");
+        log::trace!("Outgoing: {res:?}");
 
         let body = if streaming {
             let mut event_reader = EventReader::default();
@@ -183,7 +239,6 @@ impl Service for ReverseProxy {
                         }
                     } else {
                         let msg: api::ResponseStreamChunk = serde_json::from_str(&data)?;
-                        log::trace!("Outgoing response event struct: {:?}", msg);
 
                         let mut choices = msg.choices;
                         for choice in choices.iter_mut() {
@@ -192,7 +247,6 @@ impl Service for ReverseProxy {
                             }
                         }
                         let msg = api::ResponseStreamChunk { choices };
-                        log::trace!("Incoming response event struct: {:?}", msg);
                         Event {
                             // TODO: Write to output without allocation
                             data: Some(serde_json::to_string(&msg)?.into()),
@@ -211,13 +265,12 @@ impl Service for ReverseProxy {
             let data = res.into_body().collect().await?.to_bytes();
             log::trace!("Outgoing response data: {}", String::from_utf8_lossy(&data));
             let msg: api::Response = serde_json::from_slice(&data)?;
-            log::trace!("Outgoing response struct: {:?}", msg);
+
             let msg = api::Response {
                 choices: msg.choices,
             };
             log::trace!("Incoming response struct: {:?}", msg);
             let data = serde_json::to_string(&msg)?;
-            log::trace!("Incoming response data: {}", data);
             Full::new(Bytes::from(data))
                 .map_err(|_: Infallible| unreachable!())
                 .boxed()
@@ -232,6 +285,7 @@ impl Service for ReverseProxy {
                 },
             )
             .body(body)?;
+        log::trace!("Incoming: {res:?}");
 
         Ok(res)
     }

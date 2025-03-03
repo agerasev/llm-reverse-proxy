@@ -1,9 +1,14 @@
 use std::{env, path::Path};
 
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use hyper::Uri;
 
-use openai_reverse_proxy::{Router, files::FileServer, openai::proxy::ReverseProxy, serve};
+use openai_reverse_proxy::{
+    Router,
+    files::FileServer,
+    openai::proxy::{ReverseProxy, ServerKind},
+    serve,
+};
 use tokio::{fs::File, io::AsyncReadExt};
 
 #[derive(Clone, Debug, Parser)]
@@ -23,14 +28,6 @@ struct Args {
     /// Static file server root path
     #[arg(long)]
     files: Option<String>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, ValueEnum)]
-enum ServerKind {
-    Openai,
-    LlamaCpp,
-    #[default]
-    Other,
 }
 
 #[tokio::main]
@@ -87,7 +84,7 @@ async fn main() {
     let res = serve(args.addr, async move || {
         Ok(Router::new(file_server.clone()).push(
             "/chat/completions",
-            ReverseProxy::new(server_url.clone())
+            ReverseProxy::new(server_url.clone(), args.kind)
                 .api_key(api_key.clone())
                 .system_prompt(system_prompt.clone()),
         ))
