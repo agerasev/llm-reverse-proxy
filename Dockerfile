@@ -34,5 +34,7 @@ COPY --from=0 /build /srv
 COPY --from=1 /build /srv/static
 
 WORKDIR /srv/
-ENV RUST_LOG=debug
-CMD ["./server", "--server=https://api.openai.com/", "--kind=openai", "--files=./static/"]
+ENV RUST_LOG=info
+ENV API_ADDR=https://api.openai.com/
+ENV API_KIND=openai
+CMD ./server --server=$API_ADDR --kind=$API_KIND --files=./static/
