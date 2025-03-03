@@ -31,13 +31,21 @@ class Chat {
 
         let button = document.getElementById("send")! as HTMLButtonElement;
         button.disabled = true;
-        const stream = await this.client.send(this.model, this.messages);
+        try {
+            const stream = await this.client.send(this.model, this.messages);
 
-        history.innerHTML += "<h3>Assistant</h3>";
-        for await (const chunk of stream) {
-            history.innerHTML += escapeHtml(chunk);
+            history.innerHTML += "<h3>Assistant</h3>";
+            for await (const chunk of stream) {
+                history.innerHTML += escapeHtml(chunk);
+            }
+            this.messages.push(await stream.collect());
+        } catch (e) {
+            //if (e instanceof Error) {
+            history.innerHTML += `<h3 style="color:#ff0000">${escapeHtml(e.message)}</h3>`;
+            //} else {
+            //    throw e;
+            //}
         }
-        this.messages.push(await stream.collect());
         button.disabled = false;
     }
 

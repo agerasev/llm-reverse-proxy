@@ -1,10 +1,12 @@
-import { OpenAI } from 'openai';
+import { APIError, OpenAI } from 'openai';
 import { Stream } from 'openai/streaming';
 import {
     ChatCompletionChunk,
     ChatCompletionAssistantMessageParam,
     ChatCompletionUserMessageParam,
 } from 'openai/resources/chat/completions';
+
+export type Error = APIError;
 
 export interface Message {
     role: "user" | "assistant";

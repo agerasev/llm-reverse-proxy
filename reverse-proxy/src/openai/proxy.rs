@@ -152,8 +152,48 @@ impl ReverseProxy {
 
 impl Service for ReverseProxy {
     async fn call(&self, req: Request<Incoming>) -> Result<Response<Outgoing>, Error> {
+        match self.forward(req).await {
+            Ok(res) => Ok(res),
+            Err(err) => {
+                log::error!("Reverse-proxy forwarding error:\n{err}");
+                Ok(Response::builder()
+                    .status(500)
+                    .header(header::CONTENT_TYPE, "text/plain")
+                    .body(
+                        Full::new(Bytes::from(err.to_string()))
+                            .map_err(|_: Infallible| unreachable!())
+                            .boxed(),
+                    )?)
+            }
+        }
+    }
+}
+
+struct RequestParams {
+    streaming: bool,
+}
+
+impl ReverseProxy {
+    async fn forward(&self, req: Request<Incoming>) -> Result<Response<Outgoing>, Error> {
         log::trace!("Incoming: {req:?}");
 
+        let (req, params) = self.convert_request(req).await?;
+        log::trace!("Outgoing: {req:?}");
+
+        // Await the response...
+        let res = self.send(req).await?;
+        log::trace!("Outgoing: {res:?}");
+
+        let res = self.convert_response(res, params).await?;
+        log::trace!("Incoming: {res:?}");
+
+        Ok(res)
+    }
+
+    async fn convert_request(
+        &self,
+        req: Request<Incoming>,
+    ) -> Result<(Request<Full<Bytes>>, RequestParams), Error> {
         let host = self.url.authority().expect("Client URL must be set");
         let uri = req.uri().clone();
         if uri.path() != "/chat/completions" {
@@ -205,14 +245,20 @@ impl Service for ReverseProxy {
         if let Some(api_key) = &self.api_key {
             builder = builder.header(header::AUTHORIZATION, format!("Bearer {api_key}"));
         }
-        let req = builder.body(Full::new(data))?;
-        log::trace!("Outgoing: {req:?}");
 
-        // Await the response...
-        let res = self.send(req).await?;
-        log::trace!("Outgoing: {res:?}");
+        Ok((builder.body(Full::new(data))?, RequestParams { streaming }))
+    }
 
-        let body = if streaming {
+    async fn convert_response(
+        &self,
+        res: Response<Incoming>,
+        params: RequestParams,
+    ) -> Result<Response<Outgoing>, Error> {
+        if !res.status().is_success() {
+            bail!("Response status is {}", res.status());
+        }
+
+        let body = if params.streaming {
             let mut event_reader = EventReader::default();
             StreamBody::new(BodyStream::new(res.into_body()).map(move |res| {
                 let input = match res?.into_data() {
@@ -275,18 +321,16 @@ impl Service for ReverseProxy {
                 .map_err(|_: Infallible| unreachable!())
                 .boxed()
         };
-        let res = Response::builder()
+
+        Ok(Response::builder()
             .header(
                 header::CONTENT_TYPE,
-                if streaming {
+                if params.streaming {
                     "text/event-stream"
                 } else {
                     "application/json"
                 },
             )
-            .body(body)?;
-        log::trace!("Incoming: {res:?}");
-
-        Ok(res)
+            .body(body)?)
     }
 }
