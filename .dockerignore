@@ -1,3 +1,4 @@
+.env
 /client-example/node_modules
 /client-example/*/node_modules
 /client-example/*/build

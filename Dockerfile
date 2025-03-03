@@ -32,7 +32,6 @@ RUN apt-get update && \
 
 COPY --from=0 /build /srv
 COPY --from=1 /build /srv/static
-COPY .env /srv/
 
 WORKDIR /srv/
 ENV RUST_LOG=debug
