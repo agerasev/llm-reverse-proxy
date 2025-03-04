@@ -22,9 +22,6 @@ struct Args {
     /// HTTP proxy address
     #[arg(long)]
     proxy: Option<String>,
-    /// Server kind
-    #[arg(long, value_enum, default_value_t)]
-    kind: ServerKind,
     /// System prompt
     #[arg(long)]
     prompt: Option<String>,
@@ -44,7 +41,15 @@ async fn main() {
     assert!(server_url.path() == "/");
     assert!(server_url.query().is_none());
 
-    let http_proxy_url = args
+    let (server_kind, model_name) = if server_url.host() == Some("api.openai.com") {
+        (ServerKind::OpenAi, "gpt-4o-mini".to_string())
+    } else {
+        (ServerKind::LlamaCpp, String::new())
+    };
+    log::info!("{server_kind:?}");
+    log::info!("Model_name: {model_name}");
+
+    let proxy_url = args
         .proxy
         .map(|s| s.parse::<Uri>())
         .transpose()
@@ -65,7 +70,7 @@ async fn main() {
     if let Err(e) = dotenvy::dotenv() {
         log::warn!("Cannot load .env file: {e}");
     }
-    let api_key = if let ServerKind::Openai = args.kind {
+    let api_key = if let ServerKind::OpenAi { .. } = &server_kind {
         assert!(server_url.scheme_str() == Some("https"));
         Some(env::var("OPENAI_API_KEY").expect("OpenAI API key is not set"))
     } else {
@@ -94,8 +99,10 @@ async fn main() {
     let res = serve(args.addr, async move || {
         Ok(Router::new(file_server.clone()).push(
             "/chat/completions",
-            ReverseProxy::new(server_url.clone(), args.kind)
-                .proxy(http_proxy_url.clone())
+            ReverseProxy::new(server_url.clone())
+                .proxy(proxy_url.clone())
+                .kind(server_kind)
+                .model(model_name.clone())
                 .api_key(api_key.clone())
                 .system_prompt(system_prompt.clone()),
         ))

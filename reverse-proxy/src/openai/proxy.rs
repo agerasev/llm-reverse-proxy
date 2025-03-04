@@ -1,7 +1,6 @@
 use std::{convert::Infallible, pin::Pin};
 
 use anyhow::{Error, anyhow, bail};
-use clap::ValueEnum;
 use http::{header, uri::PathAndQuery};
 use http_body_util::{BodyExt, BodyStream, Full, StreamBody};
 use hyper::{
@@ -115,17 +114,18 @@ impl Connection {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, ValueEnum)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
 pub enum ServerKind {
     #[default]
     LlamaCpp,
-    Openai,
+    OpenAi,
 }
 
 pub struct ReverseProxy {
     url: Uri,
     proxy: Option<Uri>,
 
+    model: String,
     kind: ServerKind,
 
     api_key: Option<String>,
@@ -135,15 +135,26 @@ pub struct ReverseProxy {
 }
 
 impl ReverseProxy {
-    pub fn new(url: Uri, kind: ServerKind) -> Self {
+    pub fn new(url: Uri) -> Self {
         Self {
             url,
             proxy: None,
-            kind,
+            model: String::new(),
+            kind: ServerKind::default(),
             api_key: None,
             system_prompt: None,
             connection: Mutex::new(None),
         }
+    }
+
+    pub fn model(mut self, model: String) -> Self {
+        self.model = model;
+        self
+    }
+
+    pub fn kind(mut self, kind: ServerKind) -> Self {
+        self.kind = kind;
+        self
     }
 
     pub fn proxy(mut self, proxy: Option<Uri>) -> Self {
@@ -243,11 +254,7 @@ impl ReverseProxy {
         messages.extend(msg.messages);
         let streaming = msg.stream.unwrap_or(false);
         let msg = api::Request {
-            model: match self.kind {
-                ServerKind::LlamaCpp => "",
-                ServerKind::Openai => "gpt-4o-mini",
-            }
-            .into(),
+            model: self.model.as_str().into(),
             messages,
             stream: Some(streaming),
         };
@@ -262,7 +269,7 @@ impl ReverseProxy {
             let mut parts = uri.into_parts();
             parts.path_and_query = Some(PathAndQuery::from_static(match self.kind {
                 ServerKind::LlamaCpp => "/chat/completions",
-                ServerKind::Openai => "/v1/chat/completions",
+                ServerKind::OpenAi { .. } => "/v1/chat/completions",
             }));
             Uri::from_parts(parts)?
         };
