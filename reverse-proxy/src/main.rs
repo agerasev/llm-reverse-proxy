@@ -13,12 +13,15 @@ use tokio::{fs::File, io::AsyncReadExt};
 
 #[derive(Clone, Debug, Parser)]
 struct Args {
-    /// Proxy address it listens to client connections
+    /// Address to listen to client connections
     #[arg(short, long, default_value = "0.0.0.0:4000")]
     addr: String,
     /// Server URL where client connection should be forwarded
     #[arg(short, long)]
     server: String,
+    /// HTTP proxy address
+    #[arg(long)]
+    proxy: Option<String>,
     /// Server kind
     #[arg(long, value_enum, default_value_t)]
     kind: ServerKind,
@@ -40,6 +43,13 @@ async fn main() {
     assert!(server_url.authority().is_some());
     assert!(server_url.path() == "/");
     assert!(server_url.query().is_none());
+
+    let http_proxy_url = args
+        .proxy
+        .map(|s| s.parse::<Uri>())
+        .transpose()
+        .expect("Cannot parse HTTP proxy URL")
+        .inspect(|url| log::info!("Using HTTP proxy: {url}"));
 
     let file_server = if let Some(path) = &args.files {
         let path = Path::new(path);
@@ -85,6 +95,7 @@ async fn main() {
         Ok(Router::new(file_server.clone()).push(
             "/chat/completions",
             ReverseProxy::new(server_url.clone(), args.kind)
+                .proxy(http_proxy_url.clone())
                 .api_key(api_key.clone())
                 .system_prompt(system_prompt.clone()),
         ))

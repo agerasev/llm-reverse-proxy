@@ -1,6 +1,6 @@
 use std::{convert::Infallible, pin::Pin};
 
-use anyhow::{Error, bail};
+use anyhow::{Error, anyhow, bail};
 use clap::ValueEnum;
 use http::{header, uri::PathAndQuery};
 use http_body_util::{BodyExt, BodyStream, Full, StreamBody};
@@ -22,9 +22,28 @@ use tokio_stream::StreamExt;
 
 use crate::{
     Outgoing, Service,
+    http_util::{
+        self,
+        sse::{Event, EventReader},
+    },
     openai::api::{self, Message},
-    sse::{Event, EventReader},
 };
+
+fn url_to_host_and_port(url: &Uri) -> Result<(&str, u16), Error> {
+    // Get the host and the port
+    let host = url
+        .host()
+        .ok_or_else(|| anyhow!("URL has no host: {url}"))?;
+    let port = url.port_u16();
+    match url
+        .scheme_str()
+        .ok_or_else(|| anyhow!("Server address has no scheme: {url}"))?
+    {
+        "http" => Ok((host, port.unwrap_or(80))),
+        "https" => Ok((host, port.unwrap_or(443))),
+        scheme => Err(anyhow!("Unsupported scheme: {scheme}")),
+    }
+}
 
 struct Connection {
     sender: SendRequest<Full<Bytes>>,
@@ -32,28 +51,26 @@ struct Connection {
 }
 
 impl Connection {
-    async fn connect_url(url: &Uri) -> Result<Self, Error> {
-        // Get the host and the port
-        let host = url.host().expect("URL has no host");
-        let port = url.port_u16();
+    async fn connect(url: &Uri) -> Result<Self, Error> {
+        // Open a TCP connection to the remote host
+        let stream = TcpStream::connect(url_to_host_and_port(url)?).await?;
+        Self::connect_raw_socket(stream, url).await
+    }
+
+    async fn connect_through_proxy(proxy: &Uri, dst: &Uri) -> Result<Self, Error> {
+        let mut stream = TcpStream::connect(url_to_host_and_port(proxy)?).await?;
+        http_util::proxy::handshake(&mut stream, url_to_host_and_port(dst)?).await?;
+        Self::connect_raw_socket(stream, dst).await
+    }
+
+    async fn connect_raw_socket(stream: TcpStream, url: &Uri) -> Result<Self, Error> {
+        let addr = url_to_host_and_port(url)?;
         match url.scheme_str().expect("Server address has no scheme") {
-            "http" => {
-                let addr = format!("{}:{}", host, port.unwrap_or(80));
-
-                // Open a TCP connection to the remote host
-                let stream = TcpStream::connect(&addr).await?;
-
-                Self::connect_stream(stream, addr).await
-            }
+            "http" => Self::connect_stream(stream, addr).await,
             "https" => {
-                let addr = format!("{}:{}", host, port.unwrap_or(443));
-
-                // Open an SSL connection to the remote host
-                let stream = TcpStream::connect(&addr).await?;
-
                 let ssl_context = SslContext::builder(SslMethod::tls())?.build();
                 let mut ssl = Ssl::new(&ssl_context)?;
-                ssl.set_hostname(host)?;
+                ssl.set_hostname(addr.0)?;
                 let mut ssl_stream = SslStream::new(ssl, stream)?;
                 Pin::new(&mut ssl_stream).connect().await?;
 
@@ -65,8 +82,10 @@ impl Connection {
 
     async fn connect_stream<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
         stream: S,
-        addr: String,
+        addr: (&str, u16),
     ) -> Result<Self, Error> {
+        let addr = format!("{}:{}", addr.0, addr.1);
+
         // Use an adapter to access something implementing `tokio::io` traits as if they implement
         // `hyper::rt` IO traits.
         let io = TokioIo::new(stream);
@@ -105,6 +124,8 @@ pub enum ServerKind {
 
 pub struct ReverseProxy {
     url: Uri,
+    proxy: Option<Uri>,
+
     kind: ServerKind,
 
     api_key: Option<String>,
@@ -117,11 +138,17 @@ impl ReverseProxy {
     pub fn new(url: Uri, kind: ServerKind) -> Self {
         Self {
             url,
+            proxy: None,
             kind,
             api_key: None,
             system_prompt: None,
             connection: Mutex::new(None),
         }
+    }
+
+    pub fn proxy(mut self, proxy: Option<Uri>) -> Self {
+        self.proxy = proxy;
+        self
     }
 
     pub fn api_key(mut self, api_key: Option<String>) -> Self {
@@ -139,7 +166,10 @@ impl ReverseProxy {
         let conn = loop {
             let conn = match guard.take() {
                 Some(conn) => conn,
-                None => Connection::connect_url(&self.url).await?,
+                None => match &self.proxy {
+                    None => Connection::connect(&self.url).await?,
+                    Some(proxy) => Connection::connect_through_proxy(proxy, &self.url).await?,
+                },
             };
             if conn.is_closed() {
                 continue;
