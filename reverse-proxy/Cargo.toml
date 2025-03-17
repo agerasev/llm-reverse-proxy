@@ -3,6 +3,9 @@ name = "openai-reverse-proxy"
 version = "0.1.0"
 edition = "2024"
 
+authors = ["Alexey Gerasev <alexey.gerasev@gmail.com>"]
+license = "MIT"
+
 [dependencies]
 tokio = { version = "1.43.0", features = ["full"] }
 tokio-util = { version = "0.7.13", features = ["full"] }
