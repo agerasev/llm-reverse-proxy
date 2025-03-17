@@ -9,7 +9,7 @@ COPY ./reverse-proxy /src
 RUN cd /src && \
     cargo build --release && \
     mkdir -p /build/ && \
-    cp target/release/openai-reverse-proxy /build/server
+    cp target/release/llm-reverse-proxy /build/server
 
 
 FROM node:23-bookworm-slim

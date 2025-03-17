@@ -3,7 +3,7 @@ use std::{env, path::Path};
 use clap::Parser;
 use hyper::Uri;
 
-use openai_reverse_proxy::{
+use llm_reverse_proxy::{
     Router,
     files::FileServer,
     openai::proxy::{ReverseProxy, ServerKind},

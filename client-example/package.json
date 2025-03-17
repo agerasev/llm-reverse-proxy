@@ -1,5 +1,5 @@
 {
-    "name": "dashboard-assistant",
+    "name": "llm-client",
     "workspaces": [
         "common",
         "node",

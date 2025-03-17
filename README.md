@@ -1,9 +1,9 @@
-# dashboard-assistant
+# llm-reverse-proxy
 
 ## Build
 
 ```sh
-docker build -t dashboard-assistant .
+docker build -t llm-reverse-proxy .
 ```
 
 ## Run
@@ -13,7 +13,7 @@ docker run \
     --name <container-name> \
     -e OPENAI_API_KEY=<key> \
     -p <port>:4000 \
-    dashboard-assistant:latest
+    llm-reverse-proxy:latest
 ```
 
 Simple chat client can be accessed by opening `http://localhost:<port>/` in your browser.

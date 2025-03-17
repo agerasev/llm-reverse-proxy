@@ -460,6 +460,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "875b3680cb2f8f71bdcf9a30f38d48282f5d3c95cbf9b3fa57269bb5d5c06828"
 
 [[package]]
+name = "llm-reverse-proxy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dotenvy",
+ "env_logger",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "log",
+ "openssl",
+ "pin-project",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "tokio",
+ "tokio-openssl",
+ "tokio-stream",
+ "tokio-util",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -515,30 +539,6 @@ name = "once_cell"
 version = "1.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "945462a4b81e43c4e3ba96bd7b49d834c6f61198356aa858733bc4acf3cbe62e"
-
-[[package]]
-name = "openai-reverse-proxy"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "dotenvy",
- "env_logger",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "log",
- "openssl",
- "pin-project",
- "serde",
- "serde_json",
- "smallvec",
- "tokio",
- "tokio-openssl",
- "tokio-stream",
- "tokio-util",
-]
 
 [[package]]
 name = "openssl"
